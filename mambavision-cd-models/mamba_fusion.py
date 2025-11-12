@@ -1,0 +1,282 @@
+import torch
+from torch import  nn
+import torch.nn.functional as F
+from einops import *
+from mamba_vision import MambaVision, MambaVisionMixer
+from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
+import math
+
+class ToSequenceForm(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        if x.ndim == 3: return x # already sequence
+        return rearrange(x, "b c h w -> b (h w) c")
+
+class ToImageForm(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        '''
+        assume image has equal width and height, and sequence length is a perfect square
+        '''
+        if x.ndim == 4: return x # already image
+
+        B, L, D = x.shape
+        H = W = int(L ** 0.5)
+        assert H * W == L, "L must be a perfect square"
+        return rearrange(x, "b (h w) d -> b d h w", h=H, w=W)
+
+def test_conversion_round_trip():
+    to_seq = ToSequenceForm()
+    to_img = ToImageForm()
+    N, C, W, H = 2, 8, 32, 32
+    x = torch.rand(N, C, W, H)
+    assert torch.equal(x, to_img(to_seq(x))), "conversion round trip img -> seq -> img fail"
+
+    x = torch.rand(N, W*H, C)
+    assert torch.equal(x, to_seq(to_img(x))), "conversion round trip seq -> img -> seq fail" 
+    print(f"Conversion round trip assert pass")    
+
+
+class GlobalExtractor(nn.Module):
+    def __init__(self, in_channels, out_channels, 
+                 expand=2, 
+                 d_conv=4, 
+                 dt_rank="auto", 
+                 dt_scale=1.0, 
+                 dt_init="random", 
+                 dt_init_floor=1e-4,
+                 dt_min=0.001,
+                 dt_max=0.1,
+                 device="cuda"):
+
+        super().__init__()
+        self.d_inner = int(in_channels*expand)
+        self.dt_rank = math.ceil(self.d_model / 16) if dt_rank == "auto" else dt_rank
+        self.mamba_mixer_path = MambaVisionMixer(in_channels, expand=expand, use_linear=False, d_conv=d_conv)
+        self.global_proj = nn.Linear(in_channels, self.d_inner)
+        self.global_conv = nn.Sequential(
+            nn.Conv1d(self.d_inner, self.d_inner, kernel_size=d_conv, groups=self.d_inner),
+            nn.SiLU()
+        )
+        self.D = nn.Parameter(torch.ones(self.d_inner//2, device=device))
+        self.out_proj = nn.Linear(self.d_inner, out_channels)
+        self.to_sequence = ToSequenceForm()
+        self.to_img = ToImageForm()
+
+        A = repeat(
+            torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
+            "n -> d n",
+            d=self.d_inner//2,
+        ).contiguous()
+        A_log = torch.log(A)
+        self.A_log = nn.Parameter(A_log)
+        self.A_log._no_weight_decay = True
+        self.dt_proj = nn.Linear(self.dt_rank, self.d_inner//2, bias=True)
+        dt_init_std = self.dt_rank**-0.5 * dt_scale
+        if dt_init == "constant":
+            nn.init.constant_(self.dt_proj.weight, dt_init_std)
+        elif dt_init == "random":
+            nn.init.uniform_(self.dt_proj.weight, -dt_init_std, dt_init_std)
+        else:
+            raise NotImplementedError
+        dt = torch.exp(
+            torch.rand(self.d_inner//2) * (math.log(dt_max) - math.log(dt_min))
+            + math.log(dt_min)
+        ).clamp(min=dt_init_floor)
+        inv_dt = dt + torch.log(-torch.expm1(-dt))
+        with torch.no_grad():
+            self.dt_proj.bias.copy_(inv_dt)
+   
+
+    def forward(self, f1, f2):
+        f1 = self.to_sequence(f1)
+        f2 = self.to_sequence(f2)
+        _, seqlen, _ = f1.shape
+
+        f1 = self.mamba_mixer_path(f1)
+
+        f2_proj = self.global_proj(f2)
+        f2 =  self.global_conv(rearrange(f2_proj, "b l d -> b d l"))
+
+        x_dbl = self.x_proj(rearrange(f2, "b d l -> (b l) d"))
+        dt, B, C = torch.split(x_dbl, [self.dt_rank, self.d_state, self.d_state], dim=-1)
+        dt = rearrange(self.dt_proj(dt), "(b l) d -> b d l", l=seqlen)
+        A = -torch.exp(self.A_log.float())
+        B = rearrange(B, "(b l) dstate -> b dstate l", l=seqlen).contiguous()
+        C = rearrange(C, "(b l) dstate -> b dstate l", l=seqlen).contiguous()
+        y = selective_scan_fn(f2, 
+                              dt, 
+                              A, 
+                              B, 
+                              C, 
+                              self.D.float(), 
+                              z=None, 
+                              delta_bias=self.dt_proj.bias.float(), 
+                              delta_softplus=True, 
+                              return_last_state=None)
+        y = rearrange(y, "b d l -> b l d")
+        return self.to_img(self.out_proj(f1 * y))
+            
+    
+
+class LocalExtractor(nn.Module):
+    def __init__(self, in_channels, out_channels, expand=2):
+        super().__init__()
+        self.d_inner = int(in_channels*expand)
+        self.mamba_mixer_path = MambaVisionMixer(in_channels, expand=expand, use_linear=False)
+        self.local_ext_path = nn.Sequential(
+            nn.Conv2d(in_channels, self.d_inner, kernel_size=3, padding=1),
+            nn.SiLU(),
+            nn.Conv2d(self.d_inner, self.d_inner, kernel_size=3, padding=1),
+            nn.LayerNorm(self.d_inner),
+            nn.SiLU()
+        ) 
+        self.out_proj = nn.Linear(self.d_inner, out_channels)
+
+    def forward(self, f1, f2):
+        f1 = self.mamba_mixer_path(f1)
+        f2 = self.local_ext_path(f2)
+        return self.out_proj(f1 * f2)
+        
+
+class LocalGlobalFusion(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.local_extractor = GlobalExtractor(in_channels, in_channels)
+        self.global_extractor = LocalExtractor(in_channels, in_channels)
+        self.sum_weight_proj = nn.Linear(in_channels*2, 2)
+
+    def compute_gate_score(self, f_g, f_l): # each of shape B L D
+        f_g_mean = torch.mean(f_g, dim=1, keepdim=True) # B D
+        f_l_mean = torch.mean(f_l, dim=1, keepdim=True) # B D
+        f_gl_mean = torch.cat([f_g_mean, f_l_mean], dim=-1) # B 2D
+        gate_score = F.softmax(self.sum_weight_proj(f_gl_mean), dim=-1) # B 2D
+        # gate score weights importance of each dimension
+        return gate_score
+
+    
+    def forward(self, x1, x2):
+        B, L, D = x1.shape
+        glb1, glb2 = self.global_extractor(x1, x2)
+        lcl1, lcl2 = self.local_extractor(x1, x2)
+
+        G1 = self.compute_gate_score(glb1, lcl1)
+        G2 = self.compute_gate_score(glb2, lcl2)
+
+        x1 = G1[:, 0:1].view(B, 1, 1, 1)*lcl1 + G1[:, 1:2].view(B, 1, 1, 1)*glb1
+        x2 = G2[:, 0:1].view(B, 1, 1, 1)*lcl2 + G2[:, 1:2].view(B, 1, 1, 1)*glb2
+
+        return torch.abs(x1 - x2)
+
+class MambaVisionCDDecoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, upsample=True, fuse_features=True):
+        super().__init__()
+        self.upsample = upsample
+        self.fuse_features = fuse_features
+        self.mixer = MambaVisionMixer(in_channels)
+        self.forward_features = nn.Sequential(
+                nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1),
+                nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, padding=1)
+        )
+
+    def forward(self, x, x_last=None):
+        x = self.mixer(x) + x_last if self.fuse_features or x_last == None else self.mixer(x)
+        if not self.upsample:
+            return x
+        return self.forward_features(x)
+
+class ConvUpsampleAndClassify(nn.Module):
+    def __init__(self, in_channels, out_channels, embed_dims=256):
+        super().__init__()
+        self.out_channels = out_channels
+
+        self.conv1 = nn.ConvTranspose2d(in_channels=in_channels, out_channels=in_channels, kernel_size=4, stride=2, padding=1)
+        self.dense = nn.Sequential(
+                nn.Conv2d(in_channels, embed_dims, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.Conv2d(embed_dims, in_channels, kernel_size=3, padding=1)
+        )
+        self.conv2 = nn.ConvTranspose2d(in_channels=in_channels, out_channels=in_channels, kernel_size=4, stride=2, padding=1)
+        self.conv_classify = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, padding=1)
+
+    def forward(self, x):
+        N, C, W, H = x.shape
+        x = self.conv1(x)
+        assert x.shape == (N, C, W*2, H*2), x.shape
+        x1 = self.dense(x)
+        assert x1.shape == (N, C, W*2, H*2), x1.shape
+        x = self.conv2(x + x1)
+        assert x.shape == (N, C, W*4, H*4), x.shape
+        class_logits = self.conv_classify(x)
+        return class_logits
+
+class MambaVisionCDDecoder(nn.Module):
+    def __init__(self,
+                 num_classes,
+                 dims):
+        super().__init__()
+        self.dims = dims
+        self.fusion = nn.ModuleList([
+            LocalGlobalFusion(dims[i]) for i in range(len(dims)) 
+        ])
+        self.lowest_block = MambaVisionCDDecoderBlock(dims[-1], dims[-2], upsample=True, fuse_features=False)
+        self.blocks = nn.ModuleList([
+            MambaVisionCDDecoderBlock(dims[i], dims[i-1]) for i in range(1, len(dims)-1)
+        ])
+        self.final_block = MambaVisionCDDecoderBlock(dims[1], dims[0], upsample=False, fuse_features=False)
+        self.classifier = ConvUpsampleAndClassify(dims[0], num_classes)
+
+
+    def forward(self, x1s, x2s):
+        x_fused_list = [None for _ in range(len(self.dims))]
+        x_fused_list[-1] = self.lowest_block(self.fusion[-1](x1s[-1], x2s[-1]))
+        for i in range(len(self.blocks)-2,0,-1):
+            x_fused_list[i] = self.blocks[i](self.fusion[i](x1s[i], x2s[i]), x_fused_list[i+1])
+        return self.classifier(self.final_block(x_fused_list[1]))
+
+class MambaVisionCD(nn.Module):
+    def __init__(self,
+                 in_chans,
+                 dims,
+                 depths,
+                 window_size,
+                 mlp_ratio,
+                 num_heads,
+                 drop_path_rate=0.2,
+                 num_classes=2,
+                 qkv_bias=True,
+                 qk_scale=None,
+                 drop_rate=0.,
+                 attn_drop_rate=0.,
+                 layer_scale=None,
+                 layer_scale_conv=None,
+                 **kwargs):
+        super().__init__()
+        self.enc = MambaVision(
+                 in_chans,
+                 dims,
+                 depths,
+                 window_size,
+                 mlp_ratio,
+                 num_heads,
+                 drop_path_rate=drop_path_rate,
+                 num_classes=num_classes,
+                 qkv_bias=qkv_bias,
+                 qk_scale=qk_scale,
+                 drop_rate=drop_rate,
+                 attn_drop_rate=attn_drop_rate,
+                 layer_scale=layer_scale,
+                 layer_scale_conv=layer_scale_conv
+        )
+        self.dec = MambaVisionCDDecoder(num_classes,
+                                        dims=dims)
+
+    def forward(self, x1, x2):
+        x1s = self.enc(x1)
+        x2s = self.enc(x2)
+        return self.dec(x1s, x2s)
+
