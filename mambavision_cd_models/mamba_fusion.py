@@ -249,27 +249,23 @@ class MambaVisionCDDecoder(nn.Module):
         self.fusion = nn.ModuleList([
             LocalGlobalFusion(dims[i]) for i in range(len(dims)) 
         ])
-        self.lowest_block = MambaVisionCDDecoderBlock(dims[-1], dims[-2], upsample=True, fuse_features=False)
-        self.blocks = nn.ModuleList([
-            MambaVisionCDDecoderBlock(dims[i], dims[i-1], upsample=True, fuse_features=True) for i in range(1, len(dims)-1)
-        ])
+
+        # for now, assume len(dims) = 4
+        self.lowest_block = MambaVisionCDDecoderBlock(dims[3], dims[2], upsample=True, fuse_features=False)
+        self.block1 = MambaVisionCDDecoderBlock(dims[2], dims[1], upsample=True, fuse_features=True)
+        self.block2 = MambaVisionCDDecoderBlock(dims[1], dims[0], upsample=True, fuse_features=True)
         self.final_block = MambaVisionCDDecoderBlock(dims[0], dims[0], upsample=False, fuse_features=True)
         self.classifier = ConvUpsampleAndClassify(dims[0], num_classes)
 
 
     def forward(self, x1s, x2s):
-        x_fused_list = [None for _ in range(len(self.dims))]
-        dim_ctr = len(self.dims)-1
-        x_fused_list[dim_ctr] = self.lowest_block(self.fusion[dim_ctr](x1s[dim_ctr], x2s[dim_ctr]))
-        dim_ctr -= 1
-        for i in range(len(self.blocks),-1,-1):
-            x_fused_list[dim_ctr] = self.blocks[i](self.fusion[dim_ctr](x1s[dim_ctr], x2s[dim_ctr]), x_last=x_fused_list[dim_ctr+1])
-            dim_ctr -= 1
-        print(self.dims[0])
-        print(x1s[0].shape)
-        print(x2s[0].shape)
-        print(x_fused_list[1].shape)
-        return self.classifier(self.final_block(self.fusion[0](x1s[0], x2s[0]), x_last=x_fused_list[1]))
+        x11, x12, x13, x14 = x1s
+        x21, x22, x23, x24 = x2s
+        x_4_fuse = self.lowest_block(self.fuse[3](x14, x24))
+        x_3_fuse = self.block1(self.fuse[2](x13, x23), x_last=x_4_fuse)
+        x_2_fuse = self.block2(self.fuse[1](x12, x22), x_last=x_3_fuse)
+        x_1_fuse = self.final_block(self.fuse[0](x11, x21), x_last=x_2_fuse)
+        return self.classifier(x_1_fuse)
 
 class MambaVisionCD(nn.Module):
     def __init__(self,
