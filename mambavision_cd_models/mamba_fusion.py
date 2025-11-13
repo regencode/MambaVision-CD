@@ -103,7 +103,7 @@ class GlobalExtractor(nn.Module):
         _, seqlen, D = x.shape
         x = self.global_proj(x)
         x =  self.global_conv(rearrange(x, "b l d -> b d l"))
-        x = self.global_proj_ln(x)
+        x = self.global_path_ln(x)
 
         x_dbl = self.x_proj(rearrange(x, "b d l -> (b l) d"))
         dt, B, C = torch.split(x_dbl, [self.dt_rank, self.d_state, self.d_state], dim=-1)
