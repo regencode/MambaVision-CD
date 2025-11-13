@@ -61,7 +61,7 @@ class GlobalExtractor(nn.Module):
         self.mamba_mixer_path = MambaVisionMixer(in_channels, expand=expand, use_linear=False, d_conv=d_conv)
         self.global_proj = nn.Linear(in_channels, self.d_inner)
         self.global_conv = nn.Sequential(
-            nn.Conv1d(self.d_inner, self.d_inner, kernel_size=d_conv, groups=self.d_inner),
+            nn.Conv1d(self.d_inner, self.d_inner, kernel_size=d_conv, groups=self.d_inner, padding="same"),
             nn.SiLU()
         )
         self.x_proj = nn.Linear(
