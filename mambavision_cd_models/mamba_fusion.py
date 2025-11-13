@@ -210,7 +210,9 @@ class MambaVisionCDDecoderBlock(nn.Module):
 
     def forward(self, x, x_last=None):
         x = self.to_seq(x)
-        x = self.mixer(x) + x_last if self.fuse_features or x_last is not None else self.mixer(x)
+        x = self.mixer(x)
+        if self.fuse_features and x_last is not None:
+            x += x_last
         x = self.to_img(x)
         if not self.upsample:
             return x
