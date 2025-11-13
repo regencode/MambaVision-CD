@@ -752,7 +752,7 @@ def mamba_vision_T(in_channels, pretrained=False, **kwargs):
     drop_path_rate = kwargs.pop("drop_path_rate", 0.2)
     pretrained_cfg = resolve_pretrained_cfg('mamba_vision_T').to_dict()
     update_args(pretrained_cfg, kwargs, kwargs_filter=None)
-    model = MambaVision(in_channels,
+    model = MambaVision(in_chans=in_channels,
                         dims=dims,
                         depths=depths,
                         num_heads=num_heads,
