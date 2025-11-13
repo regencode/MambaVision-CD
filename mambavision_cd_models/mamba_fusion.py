@@ -1,3 +1,4 @@
+from timm.models.registry import register_model
 import torch
 from torch import  nn
 import torch.nn.functional as F
@@ -5,6 +6,7 @@ from einops import *
 from .mamba_vision import MambaVision, MambaVisionMixer
 from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
 import math
+from .registry import create_model, register_pip_model, list_models
 
 class ToSequenceForm(nn.Module):
     def __init__(self):
@@ -271,6 +273,8 @@ class MambaVisionCDDecoder(nn.Module):
         x_1_fuse = self.final_block(self.fusion[0](x11, x21), x_last=x_2_fuse)
         return self.classifier(x_1_fuse)
 
+@register_pip_model
+@register_model
 class MambaVisionCD(nn.Module):
     def __init__(self,
                  in_chans,
@@ -289,6 +293,7 @@ class MambaVisionCD(nn.Module):
                  layer_scale_conv=None,
                  **kwargs):
         super().__init__()
+        self.enc = create_model("")
         self.enc = MambaVision(
                  in_chans,
                  dims,
@@ -311,6 +316,8 @@ class MambaVisionCD(nn.Module):
     def forward(self, x1, x2):
         x1s = self.enc(x1)
         x2s = self.enc(x2)
-        print(x1s[3].shape)
         return self.dec(x1s, x2s)
 
+
+if __name__ == "__main__":
+    print(list_models())

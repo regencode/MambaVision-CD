@@ -740,21 +740,20 @@ class MambaVision(nn.Module):
 @register_model
 def mamba_vision_T(pretrained=False, **kwargs):
     model_path = kwargs.pop("model_path", "/tmp/mamba_vision_T.pth.tar")
+    dims = kwargs.pop("dims", [80, 160, 320, 480])
     depths = kwargs.pop("depths", [1, 3, 8, 4])
     num_heads = kwargs.pop("num_heads", [2, 4, 8, 16])
     window_size = kwargs.pop("window_size", [8, 8, 14, 7])
-    dim = kwargs.pop("dim", 80)
-    in_dim = kwargs.pop("in_dim", 32)
     mlp_ratio = kwargs.pop("mlp_ratio", 4)
     resolution = kwargs.pop("resolution", 224)
     drop_path_rate = kwargs.pop("drop_path_rate", 0.2)
     pretrained_cfg = resolve_pretrained_cfg('mamba_vision_T').to_dict()
     update_args(pretrained_cfg, kwargs, kwargs_filter=None)
-    model = MambaVision(depths=depths,
+    model = MambaVision(3,
+                        dims=dims,
+                        depths=depths,
                         num_heads=num_heads,
                         window_size=window_size,
-                        dim=dim,
-                        in_dim=in_dim,
                         mlp_ratio=mlp_ratio,
                         resolution=resolution,
                         drop_path_rate=drop_path_rate,
@@ -765,7 +764,7 @@ def mamba_vision_T(pretrained=False, **kwargs):
         if not Path(model_path).is_file():
             url = model.default_cfg['url']
             torch.hub.download_url_to_file(url=url, dst=model_path)
-        model._load_state_dict(model_path)
+        model._load_state_dict(model_path, strict=False)
     return model
 
 
