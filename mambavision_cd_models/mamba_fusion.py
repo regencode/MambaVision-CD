@@ -231,7 +231,6 @@ class ConvUpsampleAndClassify(nn.Module):
         self.conv1 = nn.ConvTranspose2d(in_channels=in_channels, out_channels=in_channels, kernel_size=4, stride=2, padding=1)
         self.dense = nn.Sequential(
                 nn.Conv2d(in_channels, embed_dims, kernel_size=3, padding=1),
-                nn.BatchNorm2d(in_channels),
                 nn.ReLU(),
                 nn.Conv2d(embed_dims, in_channels, kernel_size=3, padding=1)
         )
