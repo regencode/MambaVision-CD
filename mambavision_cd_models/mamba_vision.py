@@ -759,8 +759,8 @@ def mamba_vision_T(in_chans=3, pretrained=False, **kwargs):
                         window_size=window_size,
                         mlp_ratio=mlp_ratio,
                         resolution=resolution,
-                        drop_path_rate=drop_path_rate,
-                        **kwargs)
+                        drop_path_rate=drop_path_rate)
+#                        **kwargs)
     model.pretrained_cfg = pretrained_cfg
     model.default_cfg = model.pretrained_cfg
     if pretrained:
