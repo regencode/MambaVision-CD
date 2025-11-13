@@ -209,7 +209,7 @@ class MambaVisionCDDecoderBlock(nn.Module):
 
     def forward(self, x, x_last=None):
         x = self.to_seq(x)
-        x = self.mixer(x) + x_last if self.fuse_features or x_last == None else self.mixer(x)
+        x = self.mixer(x) + x_last if self.fuse_features or x_last is not None else self.mixer(x)
         x = self.to_img(x)
         if not self.upsample:
             return x
@@ -261,7 +261,7 @@ class MambaVisionCDDecoder(nn.Module):
         x_fused_list = [None for _ in range(len(self.dims))]
         x_fused_list[-1] = self.lowest_block(self.fusion[-1](x1s[-1], x2s[-1]))
         for i in range(len(self.blocks)-2,0,-1):
-            x_fused_list[i] = self.blocks[i](self.fusion[i](x1s[i], x2s[i]), x_fused_list[i+1])
+            x_fused_list[i] = self.blocks[i](self.fusion[i](x1s[i], x2s[i]), x_last=x_fused_list[i+1])
         return self.classifier(self.final_block(x_fused_list[1]))
 
 class MambaVisionCD(nn.Module):
