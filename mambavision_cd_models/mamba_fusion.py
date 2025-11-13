@@ -67,7 +67,7 @@ class GlobalExtractor(nn.Module):
         self.x_proj = nn.Linear(
             self.d_inner, self.dt_rank + self.d_state * 2, bias=False
         )
-        self.D = nn.Parameter(torch.ones(self.d_inner//2, device=device))
+        self.D = nn.Parameter(torch.ones(self.d_inner, device=device))
         self.out_proj = nn.Linear(self.d_inner, out_channels)
         self.to_sequence = ToSequenceForm()
         self.to_img = ToImageForm()
@@ -75,12 +75,12 @@ class GlobalExtractor(nn.Module):
         A = repeat(
             torch.arange(1, d_state + 1, dtype=torch.float32, device=device),
             "n -> d n",
-            d=self.d_inner//2,
+            d=self.d_inner,
         ).contiguous()
         A_log = torch.log(A)
         self.A_log = nn.Parameter(A_log)
         self.A_log._no_weight_decay = True
-        self.dt_proj = nn.Linear(self.dt_rank, self.d_inner//2, bias=True)
+        self.dt_proj = nn.Linear(self.dt_rank, self.d_inner, bias=True)
         dt_init_std = self.dt_rank**-0.5 * dt_scale
         if dt_init == "constant":
             nn.init.constant_(self.dt_proj.weight, dt_init_std)
@@ -89,7 +89,7 @@ class GlobalExtractor(nn.Module):
         else:
             raise NotImplementedError
         dt = torch.exp(
-            torch.rand(self.d_inner//2) * (math.log(dt_max) - math.log(dt_min))
+            torch.rand(self.d_inner) * (math.log(dt_max) - math.log(dt_min))
             + math.log(dt_min)
         ).clamp(min=dt_init_floor)
         inv_dt = dt + torch.log(-torch.expm1(-dt))
