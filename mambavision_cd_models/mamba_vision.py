@@ -9,6 +9,7 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 
+import argparse
 import torch
 import torch.nn as nn
 from timm.models.registry import register_model
