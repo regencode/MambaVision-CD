@@ -64,7 +64,9 @@ class GlobalExtractor(nn.Module):
             nn.Conv1d(self.d_inner, self.d_inner, kernel_size=d_conv, groups=self.d_inner),
             nn.SiLU()
         )
-        self.x_proj = nn.Linear(in_channels, self.d_inner)
+        self.x_proj = nn.Linear(
+            self.d_inner//2, self.dt_rank + self.d_state * 2, bias=False
+        )
         self.D = nn.Parameter(torch.ones(self.d_inner//2, device=device))
         self.out_proj = nn.Linear(self.d_inner, out_channels)
         self.to_sequence = ToSequenceForm()
