@@ -55,6 +55,7 @@ class GlobalExtractor(nn.Module):
                  device="cuda"):
 
         super().__init__()
+        self.d_state = d_state
         self.d_inner = int(in_channels*expand)
         self.dt_rank = math.ceil(in_channels/ 16) if dt_rank == "auto" else dt_rank
         self.mamba_mixer_path = MambaVisionMixer(in_channels, expand=expand, use_linear=False, d_conv=d_conv)
@@ -104,7 +105,7 @@ class GlobalExtractor(nn.Module):
         f2 =  self.global_conv(rearrange(f2_proj, "b l d -> b d l"))
 
         x_dbl = self.x_proj(rearrange(f2, "b d l -> (b l) d"))
-        dt, B, C = torch.split(x_dbl, [self.dt_rank, d_state, d_state], dim=-1)
+        dt, B, C = torch.split(x_dbl, [self.dt_rank, self.d_state, self.d_state], dim=-1)
         dt = rearrange(self.dt_proj(dt), "(b l) d -> b d l", l=seqlen)
         A = -torch.exp(self.A_log.float())
         B = rearrange(B, "(b l) dstate -> b dstate l", l=seqlen).contiguous()
@@ -150,6 +151,7 @@ class LocalGlobalFusion(nn.Module):
         self.local_extractor = GlobalExtractor(in_channels, in_channels)
         self.global_extractor = LocalExtractor(in_channels, in_channels)
         self.sum_weight_proj = nn.Linear(in_channels*2, 2)
+        self.to_seq = ToSequenceForm()
 
     def compute_gate_score(self, f_g, f_l): # each of shape B L D
         f_g_mean = torch.mean(f_g, dim=1, keepdim=True) # B D
@@ -161,6 +163,8 @@ class LocalGlobalFusion(nn.Module):
 
     
     def forward(self, x1, x2):
+        x1 = self.to_seq(x1)
+        x2 = self.to_seq(x2)
         B, L, D = x1.shape
         glb1, glb2 = self.global_extractor(x1, x2)
         lcl1, lcl2 = self.local_extractor(x1, x2)
