@@ -144,6 +144,7 @@ class LocalExtractor(nn.Module):
             nn.Conv2d(in_channels, self.d_inner, kernel_size=3, padding=1),
             nn.SiLU(),
             nn.Conv2d(self.d_inner, self.d_inner, kernel_size=3, padding=1),
+            ToSequenceForm(),
             nn.LayerNorm(self.d_inner),
             nn.SiLU()
         ) 
