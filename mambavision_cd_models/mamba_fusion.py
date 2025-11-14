@@ -259,7 +259,7 @@ class MambaVisionCDDecoder(nn.Module):
         super().__init__()
         self.dims = dims
         self.fusion = nn.ModuleList([
-            LocalGlobalFusion(dims[i]) for i in range(len(dims)) 
+            LocalGlobalFusion(dims[i], apply_layernorm=True) for i in range(len(dims)) 
         ])
 
         # for now, assume len(dims) = 4
@@ -276,6 +276,8 @@ class MambaVisionCDDecoder(nn.Module):
             nn.init.trunc_normal_(m.weight, std=.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
