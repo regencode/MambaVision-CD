@@ -743,7 +743,7 @@ class MambaVision(nn.Module):
 @register_pip_model
 @register_model
 #modified
-def mamba_vision_T(in_chans=3, pretrained=False, **kwargs):
+def mamba_vision_T(pretrained=False, **kwargs):
     model_path = kwargs.pop("model_path", "/tmp/mamba_vision_T.pth.tar")
     dims = kwargs.pop("dims", [80, 160, 320, 640])
     depths = kwargs.pop("depths", [1, 3, 8, 4])
@@ -754,15 +754,14 @@ def mamba_vision_T(in_chans=3, pretrained=False, **kwargs):
     drop_path_rate = kwargs.pop("drop_path_rate", 0.2)
     pretrained_cfg = resolve_pretrained_cfg('mamba_vision_T').to_dict()
     update_args(pretrained_cfg, kwargs, kwargs_filter=None)
-    model = MambaVision(in_chans=in_chans,
-                        dims=dims,
+    model = MambaVision(dims=dims,
                         depths=depths,
                         num_heads=num_heads,
                         window_size=window_size,
                         mlp_ratio=mlp_ratio,
                         resolution=resolution,
-                        drop_path_rate=drop_path_rate)
-#                        **kwargs)
+                        drop_path_rate=drop_path_rate,
+                        **kwargs)
     model.pretrained_cfg = pretrained_cfg
     model.default_cfg = model.pretrained_cfg
     if pretrained:
@@ -808,7 +807,7 @@ def mamba_vision_T2(pretrained=False, **kwargs):
 
 @register_pip_model
 @register_model
-def mamba_vision_S(pretrained=False, **kwargs):
+def mamba_vision_S(in_chans=3, pretrained=False, **kwargs):
     model_path = kwargs.pop("model_path", "/tmp/mamba_vision_S.pth.tar")
     depths = kwargs.pop("depths", [3, 3, 7, 5])
     num_heads = kwargs.pop("num_heads", [2, 4, 8, 16])
