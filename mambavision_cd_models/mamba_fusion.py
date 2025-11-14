@@ -165,12 +165,14 @@ class LocalExtractor(nn.Module):
         
 
 class LocalGlobalFusion(nn.Module):
-    def __init__(self, in_channels):
+    def __init__(self, in_channels, apply_layernorm=False):
         super().__init__()
+        self.apply_layernorm = apply_layernorm
         self.global_extractor = GlobalExtractor(in_channels, in_channels)
         self.local_extractor = LocalExtractor(in_channels, in_channels)
         self.sum_weight_proj = nn.Linear(in_channels*2, 2)
         self.to_seq = ToSequenceForm()
+        self.ln = nn.LayerNorm(in_channels)
 
     def compute_gate_score(self, f_g, f_l): # each of shape B L D
         f_g = self.to_seq(f_g)
@@ -181,11 +183,13 @@ class LocalGlobalFusion(nn.Module):
         gate_score = F.softmax(self.sum_weight_proj(f_gl_mean), dim=-1) # B 2
         # gate score weights importance of each dimension
         return gate_score
-
-    
+ 
     def forward(self, x1, x2):
         x1 = self.to_seq(x1)
         x2 = self.to_seq(x2)
+        if self.apply_layernorm:
+            x1 = self.ln(x1)
+            x2 = self.ln(x2)
         B, L, D = x1.shape
         glb1, glb2 = self.global_extractor(x1, x2)
         lcl1, lcl2 = self.local_extractor(x1, x2)
