@@ -353,7 +353,7 @@ class MambaVisionCD(nn.Module):
         self.dec = MambaVisionCDDecoder(num_classes,
                                         dims=self.enc.dims,
                                         reduced_dims=None,
-                                        upsample=False)
+                                        upsample=True)
 
     def forward(self, x1, x2):
         x1s = self.enc(x1)
