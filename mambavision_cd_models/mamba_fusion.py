@@ -239,9 +239,10 @@ class MambaVisionCDDecoderBlock(nn.Module):
         return self.forward_features(x)
 
 class ConvUpsampleAndClassify(nn.Module):
-    def __init__(self, in_channels, out_channels, embed_dims=256):
+    def __init__(self, in_channels, out_channels, embed_dims=256, upsample=True):
         super().__init__()
         self.out_channels = out_channels
+        self.upsample = upsample
 
         self.conv1 = nn.ConvTranspose2d(in_channels=in_channels, out_channels=in_channels, kernel_size=4, stride=2, padding=1)
         self.dense = nn.Sequential(
@@ -254,20 +255,23 @@ class ConvUpsampleAndClassify(nn.Module):
 
     def forward(self, x):
         N, C, W, H = x.shape
-        x = self.conv1(x)
+        if self.upsample:
+            x = self.conv1(x)
         assert x.shape == (N, C, W*2, H*2), x.shape
         x1 = self.dense(x)
         assert x1.shape == (N, C, W*2, H*2), x1.shape
-        x = self.conv2(x + x1)
-        assert x.shape == (N, C, W*4, H*4), x.shape
-        class_logits = self.conv_classify(x)
+        if self.upsample:
+            x1 = self.conv2(x + x1)
+        assert x1.shape == (N, C, W*4, H*4), x.shape
+        class_logits = self.conv_classify(x1)
         return class_logits
 
 class MambaVisionCDDecoder(nn.Module):
     def __init__(self,
                  num_classes,
                  dims,
-                 reduced_dims=None):
+                 reduced_dims=None,
+                 upsample=True):
 
         reduced_dims = dims if reduced_dims is None else reduced_dims
         super().__init__()
@@ -281,7 +285,7 @@ class MambaVisionCDDecoder(nn.Module):
         self.block1 = MambaVisionCDDecoderBlock(reduced_dims[2], reduced_dims[1], upsample=True, fuse_features=True)
         self.block2 = MambaVisionCDDecoderBlock(reduced_dims[1], reduced_dims[0], upsample=True, fuse_features=True)
         self.final_block = MambaVisionCDDecoderBlock(reduced_dims[0], reduced_dims[0], upsample=False, fuse_features=True)
-        self.classifier = ConvUpsampleAndClassify(reduced_dims[0], num_classes)
+        self.classifier = ConvUpsampleAndClassify(reduced_dims[0], num_classes, upsample=upsample)
 
         self.apply(self._init_weights)
 
@@ -349,7 +353,8 @@ class MambaVisionCD(nn.Module):
             )
         self.dec = MambaVisionCDDecoder(num_classes,
                                         dims=self.enc.dims,
-                                        reduced_dims=None)
+                                        reduced_dims=None,
+                                        upsample=False)
 
     def forward(self, x1, x2):
         x1s = self.enc(x1)
