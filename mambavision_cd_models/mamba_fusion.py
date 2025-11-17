@@ -165,14 +165,22 @@ class LocalExtractor(nn.Module):
         
 
 class LocalGlobalFusion(nn.Module):
-    def __init__(self, in_channels, apply_layernorm=False):
+    def __init__(self, in_channels, reduce_to_dim=None, apply_layernorm=False, dim_reduce_mode="linear"):
         super().__init__()
         self.apply_layernorm = apply_layernorm
-        self.global_extractor = GlobalExtractor(in_channels, in_channels)
-        self.local_extractor = LocalExtractor(in_channels, in_channels)
-        self.sum_weight_proj = nn.Linear(in_channels*2, 2)
-        self.to_seq = ToSequenceForm()
+        self.in_channels = in_channels
         self.ln = nn.LayerNorm(in_channels)
+        self.reduce_to_dim = in_channels if reduce_to_dim is None else reduce_to_dim
+        if dim_reduce_mode == "linear":
+            self.dim_reduce = nn.Linear(in_channels, self.reduce_to_dim)
+        elif dim_reduce_mode == "conv":
+            self.dim_reduce = nn.Conv2d(in_channels, self.reduce_to_dim, kernel_size=3, padding=1)
+        else: 
+            print(f"invalid reduce mode: {dim_reduce_mode}, must be either linear or conv")
+        self.global_extractor = GlobalExtractor(self.reduce_to_dim, self.reduce_to_dim)
+        self.local_extractor = LocalExtractor(self.reduce_to_dim, self.reduce_to_dim)
+        self.sum_weight_proj = nn.Linear(self.reduce_to_dim*2, 2)
+        self.to_seq = ToSequenceForm()
 
     def compute_gate_score(self, f_g, f_l): # each of shape B L D
         f_g = self.to_seq(f_g)
@@ -190,6 +198,9 @@ class LocalGlobalFusion(nn.Module):
         if self.apply_layernorm:
             x1 = self.ln(x1)
             x2 = self.ln(x2)
+        if self.reduce_to_dim != self.in_channels:
+            x1 = self.dim_reduce(x1)
+            x2 = self.dim_reduce(x2)
         B, L, D = x1.shape
         glb1, glb2 = self.global_extractor(x1, x2)
         lcl1, lcl2 = self.local_extractor(x1, x2)
@@ -255,11 +266,14 @@ class ConvUpsampleAndClassify(nn.Module):
 class MambaVisionCDDecoder(nn.Module):
     def __init__(self,
                  num_classes,
-                 dims):
+                 dims,
+                 reduced_dims=None):
+
+        reduced_dims = [None for _ in range(len(dims))] if reduced_dims is None else reduced_dims
         super().__init__()
         self.dims = dims
         self.fusion = nn.ModuleList([
-            LocalGlobalFusion(dims[i], apply_layernorm=True) for i in range(len(dims)) 
+            LocalGlobalFusion(dims[i], reduce_to_dim=reduced_dims[i], dim_reduce_mode="linear", apply_layernorm=True) for i in range(len(dims)) 
         ])
 
         # for now, assume len(dims) = 4
@@ -333,7 +347,8 @@ class MambaVisionCD(nn.Module):
                      layer_scale_conv=layer_scale_conv
             )
         self.dec = MambaVisionCDDecoder(num_classes,
-                                        dims=self.enc.dims)
+                                        dims=self.enc.dims,
+                                        reduced_dims=[32, 64, 128, 256])
 
     def forward(self, x1, x2):
         x1s = self.enc(x1)
