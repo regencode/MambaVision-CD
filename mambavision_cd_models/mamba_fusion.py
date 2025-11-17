@@ -257,12 +257,11 @@ class ConvUpsampleAndClassify(nn.Module):
         N, C, W, H = x.shape
         if self.upsample:
             x = self.conv1(x)
-        assert x.shape == (N, C, W*2, H*2), x.shape
+            assert x.shape == (N, C, W*2, H*2), x.shape
         x1 = self.dense(x)
-        assert x1.shape == (N, C, W*2, H*2), x1.shape
         if self.upsample:
             x1 = self.conv2(x + x1)
-        assert x1.shape == (N, C, W*4, H*4), x.shape
+            assert x1.shape == (N, C, W*4, H*4), x.shape
         class_logits = self.conv_classify(x1)
         return class_logits
 
